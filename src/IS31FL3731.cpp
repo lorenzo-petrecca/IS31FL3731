@@ -105,7 +105,7 @@ int IS31FL3731::setOperatingMode (DriverInfo *driver, Mode mode, Frame frame) {
 */
 void IS31FL3731::setOperatingMode_g (Mode mode, Frame frame) {
     for (int i = 0; i < MAX_DRIVERS; ++i) {
-        setOperatingMode(this->drivers[i], mode);
+        setOperatingMode(this->drivers[i], mode, frame);
     }
 }
 
@@ -153,7 +153,7 @@ void IS31FL3731::setStartingFrame_g (Frame frame) {
 uint8_t IS31FL3731::init (uint8_t addr1, uint8_t addr2, uint8_t addr3, uint8_t addr4) {
     uint8_t addresses[4] = {addr1, addr2, addr3, addr4};
     //this->font = Font(&font8x5); // create instance of default font
-    uint8_t count;
+    uint8_t count = 0;
     Wire.begin();
     Wire.setClock(400000);
     for (uint8_t i = 0; i < MAX_DRIVERS; ++i) {
