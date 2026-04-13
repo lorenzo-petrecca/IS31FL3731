@@ -1,0 +1,9 @@
+# OS
+.DS_Store
+
+# editor
+.vscode/
+
+# build
+build/
+.pio/
