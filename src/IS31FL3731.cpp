@@ -184,7 +184,11 @@ uint8_t IS31FL3731::init (uint8_t addr1, uint8_t addr2, uint8_t addr3, uint8_t a
     Note: This method automatically assign default i2c addresses for number of drivers specified
 */
 uint8_t IS31FL3731::init (int number_of_drivers) {
-    uint8_t addresses[MAX_DRIVERS] = {0xFF};
+    uint8_t addresses[MAX_DRIVERS];
+    for (int i = 0; i < MAX_DRIVERS; i++) {
+        addresses[i] = 0xFF;
+    }
+
     if (number_of_drivers > 0 && number_of_drivers <= 4) {
         switch (number_of_drivers) {
             case 1:
@@ -211,7 +215,7 @@ uint8_t IS31FL3731::init (int number_of_drivers) {
         }
 
         //this->font = Font(&font8x5); // create instance of default font
-        uint8_t count;
+        uint8_t count = 0;
         Wire.begin();
         Wire.setClock(400000);
         for (uint8_t i = 0; i < MAX_DRIVERS; ++i) {
@@ -355,11 +359,16 @@ bool IS31FL3731::writeFrame (DriverInfo *driver, uint8_t ledRegisters[LED_CONTRO
     Note: This function only reserves memory for the frame in current driver, not sends it to the driver
 */
 bool IS31FL3731::allocateFrame (DriverInfo *driver, Frame frame) {
-    if (driver != nullptr && frame <= FRAME_8) {
-        driver->frames[frame] = new MatrixFrame();
-        return true;
-    }
-    return false;
+    if (driver == nullptr || frame > FRAME_8) return false;
+
+    // se il frame è già allocato, non riallocare e non perdere memoria
+    if (driver->frames[frame] != nullptr) return true;
+
+    // allocazione frame
+    driver->frames[frame] = new MatrixFrame();
+
+    // controllo di sicurezza
+    return (driver->frames[frame] != nullptr);
 }
 
 /*
@@ -369,12 +378,14 @@ bool IS31FL3731::allocateFrame (DriverInfo *driver, Frame frame) {
     Output: (bool) true if memory was successfully freed, false otherwise
 */
 bool IS31FL3731::freeFrame (DriverInfo *driver, Frame frame) {
-    if (driver != nullptr && frame <= FRAME_8) {
-        delete driver->frames[frame];
-        driver->frames[frame] = nullptr;
-        return true;
-    }
-    return false;
+    if (driver == nullptr || frame > FRAME_8) return false;
+
+    // Se il frame non era allocato, non c'è niente da liberare
+    if (driver->frames[frame] == nullptr) return true;
+
+    delete driver->frames[frame];
+    driver->frames[frame] = nullptr;
+    return true;
 }
 
 /*
@@ -403,13 +414,20 @@ bool IS31FL3731::freeAllFrames (DriverInfo *driver) {
         correctly with this function.
 */
 bool IS31FL3731::setFramePixels (DriverInfo *driver, Frame frame, uint8_t *data) {
-    if (driver != nullptr && frame <= FRAME_8) {
-        for (uint8_t b = 0; b < LED_CONTROL_REGISTERS; ++b) {
-            driver->frames[frame]->setRow(b, data[b]);
-        }
-        return true;
+    if (driver == nullptr || frame > FRAME_8 || data == nullptr) {
+        return false;
     }
-    return false;
+
+    // Il frame deve essere già stato allocato
+    if (driver->frames[frame] == nullptr) {
+        return false;
+    }
+
+    for (uint8_t b = 0; b < LED_CONTROL_REGISTERS; ++b) {
+        driver->frames[frame]->setRow(b, data[b]);
+    }
+
+    return true;
 }
 
 /*
@@ -514,26 +532,23 @@ void IS31FL3731::write (const char *str, DriverInfo *driver, bool highlight) {
             * twi error table
 */
 int IS31FL3731::writeDriver (DriverInfo *driver) {
-    if (driver != nullptr) {
-        /*
-        Wire.beginTransmission(driver->address);
-        Wire.write(COMMAND_REGISTER);
-        Wire.write(driver->picture_frame);
-        */
-        uint8_t status = selectPage(driver->address, driver->picture_frame);
+    if (driver == nullptr) return -1;
+    if (driver->picture_frame > FRAME_8) return -1;
+    if (driver->frames[driver->picture_frame] == nullptr) return -1;
+
+    uint8_t status = selectPage(driver->address, driver->picture_frame);
+    if (status != 0) return status;
+    uint8_t curr_led_register = 0x00;
+    for (uint8_t i = 0; i < LED_CONTROL_REGISTERS; ++i) {
+        status = writeRegister(
+            driver->address, 
+            curr_led_register++, 
+            driver->frames[driver->picture_frame]->data[i]
+        );
+
         if (status != 0) return status;
-        uint8_t curr_led_register = 0x00;
-        for (uint8_t i = 0; i < LED_CONTROL_REGISTERS; ++i) {
-            /*
-            Wire.write(curr_led_register++);
-            Wire.write(driver->frames[driver->picture_frame]->data[i]);
-            */
-            status = writeRegister(driver->address, curr_led_register++, driver->frames[driver->picture_frame]->data[i]);
-            if (status != 0) return status;
-        }
-        return 0;
     }
-    return -1;
+    return 0;
 }
 
 /*
@@ -629,9 +644,13 @@ uint8_t IS31FL3731::i2c_selectAndWrite (uint8_t addr, uint8_t page, uint8_t reg,
 void IS31FL3731::clear (Frame frame, DriverInfo *driver) {
     if (driver == nullptr) {
         for (uint8_t i = 0; i < MAX_DRIVERS; ++i) {
+            if (drivers[i] == nullptr) continue;
+
             if (frame != NO_SELECTION) {
                 clearFrameInDriver(drivers[i], frame);
-                clearFramePixels(drivers[i], frame);
+                if (drivers[i]->frames[frame] != nullptr) {
+                    clearFramePixels(drivers[i], frame);
+                }
             } else {
                 for (uint8_t f = FRAME_1; f <= FRAME_8; ++f) {
                     clearFrameInDriver(drivers[i], (Frame)f);
@@ -644,12 +663,14 @@ void IS31FL3731::clear (Frame frame, DriverInfo *driver) {
     } else {
         if (frame != NO_SELECTION) {
             clearFrameInDriver(driver, frame);
-            //clearFramePixels(driver, frame);
+            if (driver->frames[frame] != nullptr) {
+                clearFramePixels(driver, frame);
+            }
         } else {
             for (uint8_t f = FRAME_1; f <= FRAME_8; ++f) {
                 clearFrameInDriver(driver, (Frame)f);
                 if (driver->frames[f] != nullptr) {
-                        clearFramePixels(driver, (Frame)f);
+                    clearFramePixels(driver, (Frame)f);
                 }
             }
         }
@@ -657,7 +678,8 @@ void IS31FL3731::clear (Frame frame, DriverInfo *driver) {
      
 }
 void IS31FL3731::clearFrameInDriver (DriverInfo *driver, Frame frame) {
-    selectPage(driver->address, frame);
+    if (driver == nullptr || frame > FRAME_8) return;
+    if (selectPage(driver->address, frame) != 0) return;
     for (uint8_t r = 0; r < LED_CONTROL_REGISTERS; ++r) {
         writeRegister(driver->address, r, 0x00);
     }
@@ -685,31 +707,37 @@ bool IS31FL3731::scrollText (const char *str, unsigned long interval, DriverInfo
     for (unsigned int d = 0; d < MAX_DRIVERS; ++d) {
         if (this->drivers[d] != nullptr && ds[d] != nullptr) num_of_drivers++;
     }
-    if (num_of_drivers > MAX_DRIVERS || num_of_drivers == 0) return true;
+
+    if (num_of_drivers == 0) return true;
 
     // controllo se la stringa può essere scritta nel display senza bisogno di scroll
     if (length <= num_of_drivers * 2) {
         write(str);
+        display(); 
         return true;
     }
 
     static unsigned long previous = 0;
     static unsigned int offset = 0;
-    if (interval < millis() - previous) {
+    if (millis() - previous >= interval) {
         previous = millis();
+
         char buff[(2 * num_of_drivers) + 1];
         buff[2 * num_of_drivers] = '\0';
+
         for (unsigned int d = 0; d < num_of_drivers; ++d) {
             if (ds[d]) { 
                 unsigned int c = offset + d * 2;  
+
                 buff[d * 2] = c < length ? str[c] : ' ';
-                buff[d * 2 + 1] = c < length ? str[c+1] : ' ';
+                buff[d * 2 + 1] = (c + 1 < length) ? str[c + 1] : ' ';
 
                 write(buff, ds[d]);
             }
         }
         
         display();
+        
         // Increment offset
         if (++offset + num_of_drivers * 2 > length) {
             offset = 0; // Reset offset
@@ -723,14 +751,10 @@ bool IS31FL3731::scrollText (const char *str, unsigned long interval, DriverInfo
 
 
 bool IS31FL3731::clearFramePixels (DriverInfo *driver, Frame frame) {
-    if (driver != nullptr && frame <= FRAME_8) {
-        /*for (uint8_t b = 0; b < LED_CONTROL_REGISTERS; ++b) {
-            driver->frames[frame]->setRow(b, 0x00);
-        }*/
-        driver->frames[frame]->clear();
-        return true;
-    }
-    return false;
+    if (driver == nullptr || frame > FRAME_8) return false;
+    if (driver->frames[frame] == nullptr) return false;
+    driver->frames[frame]->clear();
+    return true;
 }
 
 

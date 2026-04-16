@@ -7,3 +7,6 @@
 # build
 build/
 .pio/
+
+# others
+ignore/
